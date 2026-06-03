@@ -1,0 +1,24 @@
+name = "wc2026-pool"
+main = "worker/worker.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wc2026"
+database_id = "b32b2024-eba5-4b36-a8bf-be1c1fa92db4"
+
+[vars]
+# Authoritative lock time (UTC). 23:00 CET on 10 Jun 2026 == 21:00 UTC.
+DEADLINE_ISO = "2026-06-10T21:00:00Z"
+# Lock to your Pages origin in production, e.g. "https://ohotnikov-dmitriy.github.io"
+ALLOW_ORIGIN = "*"
+
+# --- Keycloak (LDAP) auth ---
+KC_TOKEN_URL    = "https://auth.rustat-service.ru/realms/rustat/protocol/openid-connect/token"
+KC_USERINFO_URL = "https://auth.rustat-service.ru/realms/rustat/protocol/openid-connect/userinfo"
+KC_CLIENT_ID    = "wc2026-pool"
+
+# Secrets (set via `wrangler secret put NAME`, do NOT put values here):
+#   ADMIN_TOKEN        -> required to write official results on admin.html
+#   KC_CLIENT_SECRET   -> ONLY if the Keycloak client "wc2026-pool" is confidential
+#                         (if it is a public client with Direct Access Grants, skip it)

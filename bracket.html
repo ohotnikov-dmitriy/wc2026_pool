@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Bracket — World Cup 2026</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/bracket.css">
+</head>
+<body>
+<div class="wrap">
+  <div id="app-header"></div>
+
+  <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px">
+    <div>
+      <div class="kicker" style="font-size:18px;color:var(--gold2)" id="who">Your bracket</div>
+      <div class="muted" id="status" style="font-size:13px;margin-top:4px">Loading…</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="chip" id="progress"><span class="dot"></span><span>0 / 52 set</span></span>
+      <button class="btn btn-sm" id="logout">Log out</button>
+    </div>
+  </div>
+
+  <div id="locked-note"></div>
+  <div id="editor"></div>
+
+  <div class="actionbar" id="bar">
+    <div class="inner">
+      <div>
+        <div class="muted" style="font-size:12px;letter-spacing:.1em;text-transform:uppercase">Status</div>
+        <div id="savestate" style="font-weight:700">—</div>
+      </div>
+      <button class="btn btn-gold" id="save" disabled>Save picks</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/engine.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/thirds-table.js"></script>
+<script src="assets/bracket.js"></script>
+<script>
+  POOL.header('bracket');
+  var token = null, username = null;
+  try { token = localStorage.getItem('wc2026:token'); username = localStorage.getItem('wc2026:username'); } catch(e){}
+
+  var statusEl = document.getElementById('status');
+  var saveBtn = document.getElementById('save');
+  var saveState = document.getElementById('savestate');
+  var progress = document.getElementById('progress');
+  var closed = POOL.isClosed();
+  var dirty = false, saving = false;
+
+  function logout(){ try{ localStorage.removeItem('wc2026:token'); localStorage.removeItem('wc2026:username'); }catch(e){} location.href='index.html'; }
+  document.getElementById('logout').addEventListener('click', logout);
+
+  if(!token){ location.replace('index.html'); }
+
+  function countDone(p){
+    var n = 0;
+    WC.groupLetters.forEach(function(g){ if((p.groups[g]||[]).length===4) n++; });
+    WC.thirdSlots.forEach(function(id){ if(p.thirds[id]) n++; });
+    [].concat(WC.r32,WC.r16,WC.qf,WC.sf,WC.finalMatch,WC.thirdPlace).forEach(function(m){ if(p.winners[m.id]) n++; });
+    return n;
+  }
+
+  function renderProgress(p, full){
+    progress.innerHTML = '<span class="dot'+(full?' go':'')+'"></span><span>'+countDone(p)+' / 52 set'+(full?' · complete':'')+'</span>';
+  }
+
+  var editor = BracketEditor(document.getElementById('editor'), {
+    readOnly: closed,
+    onChange: function(p){
+      dirty = true;
+      renderProgress(p, editor.complete());
+      saveBtn.disabled = closed || saving;
+      saveState.textContent = 'Unsaved changes'; saveState.style.color = 'var(--gold2)';
+    }
+  });
+
+  function setStatus(t){ statusEl.textContent = t; }
+  function handleAuthError(){ POOL.toast('Session expired — please sign in again','err'); setTimeout(logout, 1200); }
+
+  document.getElementById('who').textContent = username ? (username + '’s bracket') : 'Your bracket';
+
+  POOL.api('/api/entry', { token: token }).then(function(r){
+    if(r.username){ username=r.username; try{localStorage.setItem('wc2026:username',r.username);}catch(e){}
+      document.getElementById('who').textContent = r.username + '’s bracket'; }
+    setStatus(closed ? 'Picks are locked (deadline passed).' : 'Signed in as ' + (username||'you') + ' · edit until ' + (window.POOL_CONFIG.DEADLINE_LABEL||'the deadline') + '.');
+    if(r.picks){ editor.setPicks(r.picks); renderProgress(editor.getPicks(), editor.complete()); }
+    saveState.textContent = r.picks ? 'Saved' : 'Nothing saved yet'; saveState.style.color = 'var(--muted)';
+    if(closed){
+      document.getElementById('locked-note').innerHTML =
+        '<div class="note warn" style="margin-bottom:16px">The deadline has passed — your picks are locked and shown read-only.</div>';
+      document.getElementById('bar').style.display = 'none';
+    }
+  }).catch(function(e){
+    if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
+    setStatus('Could not load your bracket.');
+    document.getElementById('locked-note').innerHTML = '<div class="note err" style="margin-bottom:16px">'+e.message+'</div>';
+  });
+
+  saveBtn.addEventListener('click', function(){
+    if(closed || saving) return;
+    saving = true; saveBtn.disabled = true; saveState.textContent = 'Saving…'; saveState.style.color='var(--muted)';
+    POOL.api('/api/entry', { method:'PUT', token: token, body:{ picks: editor.getPicks(), complete: editor.complete() } })
+      .then(function(){
+        saving = false; dirty = false; saveBtn.disabled = false;
+        saveState.textContent = 'Saved ✓'; saveState.style.color = 'var(--green)';
+        POOL.toast('Picks saved', 'ok');
+      }).catch(function(e){
+        saving = false; saveBtn.disabled = false;
+        if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
+        saveState.textContent = 'Save failed'; saveState.style.color = 'var(--red)';
+        POOL.toast(e.message, 'err');
+      });
+  });
+
+  window.addEventListener('beforeunload', function(e){ if(dirty && !closed){ e.preventDefault(); e.returnValue=''; } });
+</script>
+</body>
+</html>

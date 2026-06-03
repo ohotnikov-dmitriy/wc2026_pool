@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaderboard — World Cup 2026</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line)}
+  th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  td.r{text-align:right;font-variant-numeric:tabular-nums}
+  tr.me{background:rgba(245,176,65,.08)}
+  .rank{font-family:'Anton';font-size:18px;width:46px}
+  .rank.g1{color:var(--gold2)} .rank.g2{color:#cfd8e3} .rank.g3{color:#d6a06b}
+  .pts{font-family:'Anton';font-size:20px;color:var(--gold2)}
+  .bd{font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="app-header"></div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="kicker" style="font-size:21px;color:var(--gold2)">Leaderboard</div>
+    <div class="muted" id="sub" style="font-size:13px;margin-top:4px">Loading standings…</div>
+  </div>
+  <div class="card" style="padding:8px 14px"><div id="board"></div></div>
+  <p class="dim" style="font-size:12px;margin-top:14px">Scoring per round (correctly predicted participant):
+    R32 1 · R16 2 · QF 3.5 · SF 5 · Bronze final 6 · Final 6 · Champion 7.5. Max 143.5.</p>
+</div>
+
+<script src="assets/engine.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script>
+  POOL.header('leaderboard');
+  var me = null; try { me = localStorage.getItem('wc2026:username'); } catch(e){}
+
+  POOL.api('/api/leaderboard').then(function(r){
+    var rows = r.rows || [];
+    document.getElementById('sub').textContent =
+      rows.length + ' ' + (rows.length===1?'entry':'entries') +
+      (r.scored ? ' · scored vs official results' : ' · results not entered yet (0 pts so far)');
+    if(!rows.length){ document.getElementById('board').innerHTML =
+      '<p class="muted" style="padding:16px">No entries yet. <a href="index.html">Sign in to play →</a></p>'; return; }
+    var h = '<table><thead><tr><th>#</th><th>Player</th><th class="r">Points</th></tr></thead><tbody>';
+    rows.forEach(function(row, i){
+      var rk = i+1, g = rk<=3 ? ' g'+rk : '';
+      var mine = me && row.username===me;
+      var bd = row.breakdown || {};
+      var bdStr = ['r32','r16','qf','sf','bronze','final','champion'].map(function(k){ return (bd[k]||0); }).join(' · ');
+      h += '<tr class="'+(mine?'me':'')+'">' +
+        '<td class="rank'+g+'">'+rk+'</td>' +
+        '<td><b>'+esc(row.username||'—')+'</b>'+(mine?' <span class="dim">(you)</span>':'')+
+          '<div class="bd">'+bdStr+'</div></td>' +
+        '<td class="r"><span class="pts">'+(row.points!=null?row.points:0)+'</span></td>' +
+      '</tr>';
+    });
+    h += '</tbody></table>';
+    document.getElementById('board').innerHTML = h;
+  }).catch(function(err){
+    document.getElementById('sub').textContent = '';
+    document.getElementById('board').innerHTML = '<div class="note err" style="margin:14px">'+err.message+'</div>';
+  });
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+</script>
+</body>
+</html>

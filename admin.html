@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — Official Results</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/bracket.css">
+</head>
+<body>
+<div class="wrap">
+  <div id="app-header"></div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="kicker" style="font-size:18px;color:var(--gold2)">Organizer — official results</div>
+    <p class="muted" style="font-size:13px">Fill this bracket with what <b>actually happened</b>. Everyone is scored against it.
+      You can update it as the tournament progresses (partial results are fine). Requires the admin token.</p>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <label class="fl" for="tok">Admin token</label>
+        <input class="fi" id="tok" type="password" placeholder="set in the Worker secret">
+      </div>
+      <button class="btn" id="load">Load current</button>
+      <button class="btn btn-gold" id="save">Save official results</button>
+    </div>
+    <div id="msg" style="margin-top:12px"></div>
+  </div>
+
+  <div id="editor"></div>
+</div>
+
+<script src="assets/engine.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/thirds-table.js"></script>
+<script src="assets/bracket.js"></script>
+<script>
+  POOL.header('admin');
+  var msg = document.getElementById('msg');
+  function show(h,k){ msg.innerHTML = '<div class="note '+(k||'')+'">'+h+'</div>'; }
+  function token(){ return document.getElementById('tok').value.trim(); }
+
+  var editor = BracketEditor(document.getElementById('editor'), { readOnly:false, onChange:function(){} });
+
+  // remember token locally for convenience
+  try { var t = localStorage.getItem('wc2026:adminTok'); if(t) document.getElementById('tok').value = t; } catch(e){}
+
+  document.getElementById('load').addEventListener('click', function(){
+    POOL.api('/api/results').then(function(r){
+      if(r.picks) editor.setPicks(r.picks);
+      show('Loaded current official results.', 'ok');
+    }).catch(function(e){ show(e.message, 'err'); });
+  });
+
+  document.getElementById('save').addEventListener('click', function(){
+    if(!token()){ show('Enter the admin token.', 'err'); return; }
+    try { localStorage.setItem('wc2026:adminTok', token()); } catch(e){}
+    POOL.api('/api/results', { method:'PUT', token:token(), body:{ picks: editor.getPicks() } })
+      .then(function(){ show('Official results saved. Leaderboard will reflect them.', 'ok'); })
+      .catch(function(e){ show(e.message, 'err'); });
+  });
+
+  // auto-load (public read) on open
+  POOL.api('/api/results').then(function(r){ if(r.picks) editor.setPicks(r.picks); }).catch(function(){});
+</script>
+</body>
+</html>

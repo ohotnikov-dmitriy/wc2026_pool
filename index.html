@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — World Cup 2026</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="wrap narrow">
+  <div id="app-header"></div>
+
+  <section class="card">
+    <div class="kicker" style="font-size:21px;color:var(--gold2);margin-bottom:6px">Sign in</div>
+    <p class="muted" style="margin-top:0">Use your corporate (LDAP) login to make and edit your bracket.
+      You can sign in again from any device and change your picks until the deadline.</p>
+
+    <div class="note warn" id="deadline-note" style="margin:14px 0"></div>
+
+    <div style="margin-bottom:14px">
+      <label class="fl" for="username">Username</label>
+      <input class="fi" id="username" autocomplete="username" placeholder="your LDAP login">
+    </div>
+    <div style="margin-bottom:18px">
+      <label class="fl" for="password">Password</label>
+      <input class="fi" id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+    </div>
+
+    <button class="btn btn-gold" id="go" style="width:100%">Sign in →</button>
+    <div id="msg" style="margin-top:14px"></div>
+  </section>
+</div>
+
+<script src="assets/engine.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script>
+  POOL.header('login');
+  document.getElementById('deadline-note').textContent =
+    'Picks lock at ' + (window.POOL_CONFIG.DEADLINE_LABEL || 'the deadline') + '. Edit freely until then.';
+
+  var go = document.getElementById('go'), msg = document.getElementById('msg');
+  function show(html, kind){ msg.innerHTML = '<div class="note '+(kind||'')+'">'+html+'</div>'; }
+
+  // already signed in? go straight to the bracket
+  try { if (localStorage.getItem('wc2026:token')) location.replace('bracket.html'); } catch(e){}
+
+  function submit(){
+    var username = document.getElementById('username').value.trim();
+    var password = document.getElementById('password').value;
+    if(!username || !password){ show('Enter your username and password.', 'err'); return; }
+    go.disabled = true; show('Signing in…');
+    POOL.api('/api/login', { method:'POST', body:{ username:username, password:password } })
+      .then(function(r){
+        try { localStorage.setItem('wc2026:token', r.token);
+              localStorage.setItem('wc2026:username', r.username); } catch(e){}
+        location.href = 'bracket.html';
+      })
+      .catch(function(err){ go.disabled = false; show(err.message || 'Sign-in failed', 'err'); });
+  }
+  go.addEventListener('click', submit);
+  document.getElementById('password').addEventListener('keydown', function(e){ if(e.key==='Enter') submit(); });
+</script>
+</body>
+</html>
