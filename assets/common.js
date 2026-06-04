@@ -21,9 +21,13 @@
   function header(active) {
     var el = document.getElementById('app-header');
     if (!el) return;
-    var signedIn = false, uname = '';
-    try { signedIn = !!localStorage.getItem('wc2026:token'); uname = localStorage.getItem('wc2026:username') || ''; } catch(e){}
-    var nav = '<a href="bracket.html">My bracket</a><a href="leaderboard.html">Leaderboard</a>';
+    var signedIn = false, uname = '', isAdmin = false;
+    try { signedIn = !!localStorage.getItem('wc2026:token'); uname = localStorage.getItem('wc2026:username') || '';
+          isAdmin = localStorage.getItem('wc2026:admin') === '1'; } catch(e){}
+    var nav = '';
+    if (signedIn) nav += '<a href="bracket.html">My bracket</a>';
+    nav += '<a href="leaderboard.html">Leaderboard</a>';
+    if (signedIn && isAdmin) nav += '<a href="admin.html">Save results</a>';
     if (signedIn) nav += '<a href="#" id="nav-logout" title="' + uname + '">Log out</a>';
     else nav += '<a href="index.html">Sign in</a>';
     el.innerHTML =
@@ -34,7 +38,7 @@
       '</div><nav class="nav">' + nav + '</nav></div>';
     var lo = document.getElementById('nav-logout');
     if (lo) lo.addEventListener('click', function(e){ e.preventDefault();
-      try { localStorage.removeItem('wc2026:token'); localStorage.removeItem('wc2026:username'); } catch(_){}
+      ['wc2026:token','wc2026:refresh','wc2026:exp','wc2026:username','wc2026:admin'].forEach(function(k){ try { localStorage.removeItem(k); } catch(_){} });
       location.href = 'index.html'; });
   }
 
@@ -60,14 +64,59 @@
     if (opts.token) init.headers['Authorization'] = 'Bearer ' + opts.token;
     return fetch(API + path, init).then(function (r) {
       return r.json().catch(function(){ return {}; }).then(function (j) {
-        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        if (!r.ok) { var e = new Error(j.error || ('HTTP ' + r.status)); e.status = r.status; throw e; }
         return j;
       });
     });
   }
 
+  // ---- session / silent token refresh -------------------------------------
+  function ls(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function setSession(s){
+    try {
+      if (s.token) localStorage.setItem('wc2026:token', s.token);
+      if (s.refresh_token) localStorage.setItem('wc2026:refresh', s.refresh_token);
+      localStorage.setItem('wc2026:exp', String(Date.now() + (s.expires_in || 300) * 1000));
+      if (s.username) localStorage.setItem('wc2026:username', s.username);
+    } catch(e){}
+  }
+  function clearSession(){
+    ['wc2026:token','wc2026:refresh','wc2026:exp','wc2026:username','wc2026:admin']
+      .forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
+  }
+  function token(){ return ls('wc2026:token'); }
+  function username(){ return ls('wc2026:username'); }
+  function tokenFresh(skewMs){ var e = parseInt(ls('wc2026:exp')||'0',10); return !!e && Date.now() < e - (skewMs||0); }
+
+  // Exchange the stored refresh_token for a new access token.
+  function refresh(){
+    var rt = ls('wc2026:refresh');
+    if (!rt) return Promise.reject(new Error('Session expired — please sign in again'));
+    return api('/api/refresh', { method:'POST', body:{ refresh_token: rt } })
+      .then(function(r){ setSession(r); return r.token; });
+  }
+  // Resolve to a usable access token, refreshing first if it's about to expire.
+  function ensureToken(){
+    if (token() && tokenFresh(30000)) return Promise.resolve(token());
+    return refresh();
+  }
+  // Authenticated API call: ensure a fresh token, and on a 401 try one refresh + retry.
+  function apiAuth(path, opts){
+    opts = opts || {};
+    return ensureToken().then(function(tok){
+      return api(path, Object.assign({}, opts, { token: tok }));
+    }).catch(function(e){
+      if (e && (e.status === 401 || /auth|expired|sign in/i.test(e.message||''))) {
+        return refresh().then(function(tok){ return api(path, Object.assign({}, opts, { token: tok })); });
+      }
+      throw e;
+    });
+  }
+
   window.POOL = {
     API: API, flagURL: flagURL, flagImg: flagImg,
-    deadline: deadline, isClosed: isClosed, header: header, toast: toast, api: api
+    deadline: deadline, isClosed: isClosed, header: header, toast: toast, api: api,
+    setSession: setSession, clearSession: clearSession, token: token, username: username,
+    refresh: refresh, ensureToken: ensureToken, apiAuth: apiAuth
   };
 })();

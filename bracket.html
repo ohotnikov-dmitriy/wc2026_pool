@@ -6,6 +6,21 @@
 <title>My Bracket — World Cup 2026</title>
 <link rel="stylesheet" href="assets/app.css">
 <link rel="stylesheet" href="assets/bracket.css">
+<style>
+  .qa{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .qa:last-of-type{border-bottom:none}
+  .qa .qt{font-size:14px;line-height:1.4;max-width:74%}
+  .yn{display:inline-flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden;flex:0 0 auto}
+  .yn button{appearance:none;background:transparent;border:none;color:var(--muted);font:inherit;font-weight:700;font-size:13px;padding:8px 16px;cursor:pointer}
+  .yn button+button{border-left:1px solid var(--line2)}
+  .yn button.on[data-val="yes"]{background:linear-gradient(135deg,var(--green),#15a36c);color:#06140d}
+  .yn button.on[data-val="no"]{background:linear-gradient(135deg,#ff6b6b,#d8434a);color:#190a0b}
+  .yn button:disabled{cursor:default;opacity:.6}
+  .qnote{font-size:12px;color:var(--muted);line-height:1.5;margin:12px 0 0}
+  .goalq{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .goalq input{width:140px;background:#0c1119;border:1px solid var(--line2);border-radius:10px;color:var(--ink);font:inherit;font-size:15px;padding:10px 12px}
+  .view-banner{margin-bottom:16px}
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -23,6 +38,23 @@
   </div>
 
   <div id="locked-note"></div>
+
+  <!-- Bonus / tie-break questions -->
+  <section class="card" id="extras-card" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <div class="kicker" style="font-size:17px;color:var(--gold2)">Bonus questions</div>
+      <span class="chip" id="extras-progress"><span class="dot"></span><span>0 / 6 answered</span></span>
+    </div>
+    <div id="yn-list"></div>
+    <p class="qnote">Answers to additional questions will be evaluated only if two or more employees in the TOP-10 ranking have a tied score based on the results of Stage 1. Each correct answer is worth 0.2 points. It is possible that no additional points will be awarded at all if all employees in the TOP-10 have different scores.</p>
+    <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+    <div class="goalq">
+      <label class="qt" for="goals" style="font-size:14px;max-width:74%">How many goals will be scored during the FIFA 2026 World Cup? Specify the exact number.</label>
+      <input type="number" id="goals" min="0" step="1" inputmode="numeric" placeholder="e.g. 170">
+    </div>
+    <p class="qnote">In the unlikely event that two or more employees have the same score after both rounds, this question determines the winner. The employee with the most accurate answer receives 0.1 point.</p>
+  </section>
+
   <div id="editor"></div>
 
   <div class="actionbar" id="bar">
@@ -43,82 +75,143 @@
 <script src="assets/bracket.js"></script>
 <script>
   POOL.header('bracket');
+  var qs = new URLSearchParams(location.search);
+  var viewUser = qs.get('user');                 // admin viewing someone else (read-only)
   var token = null, username = null;
   try { token = localStorage.getItem('wc2026:token'); username = localStorage.getItem('wc2026:username'); } catch(e){}
 
-  var statusEl = document.getElementById('status');
-  var saveBtn = document.getElementById('save');
-  var saveState = document.getElementById('savestate');
-  var progress = document.getElementById('progress');
+  var statusEl=document.getElementById('status'), saveBtn=document.getElementById('save'),
+      saveState=document.getElementById('savestate'), progress=document.getElementById('progress');
   var closed = POOL.isClosed();
-  var dirty = false, saving = false;
+  var readOnly = closed || !!viewUser;
+  var dirty=false, saving=false;
 
-  function logout(){ try{ localStorage.removeItem('wc2026:token'); localStorage.removeItem('wc2026:username'); }catch(e){} location.href='index.html'; }
+  // -------- bonus questions --------
+  var QUESTIONS = [
+    'Will more than 140 goals be scored during the FIFA World Cup group stage?',
+    'Will Lionel Messi score 4 or more goals during the tournament (excluding goals scored in penalty shootouts)?',
+    'Will more than 15 penalties be awarded during the group stage?*',
+    'Will the Uzbekistan national team qualify for the knockout stage?*',
+    'Will there be at least 3 matches ending 0–0 during the group stage?'
+  ];
+  var extras = { yn: QUESTIONS.map(function(){return null;}), goals: '' };
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function updateExtrasProgress(){
+    var el=document.getElementById('extras-progress'); if(!el) return;
+    var TOTAL=QUESTIONS.length+1;
+    var n=extras.yn.filter(function(v){return v==='yes'||v==='no';}).length + ((extras.goals!=null&&String(extras.goals).trim()!=='')?1:0);
+    var full=n>=TOTAL;
+    el.innerHTML='<span class="dot'+(full?' go':'')+'"></span><span>'+n+' / '+TOTAL+' answered</span>';
+  }
+  function renderExtras(){
+    var h = QUESTIONS.map(function(q,i){
+      var v = extras.yn[i];
+      var dis = readOnly ? ' disabled' : '';
+      return '<div class="qa"><div class="qt">'+esc(q)+'</div>'+
+        '<div class="yn" data-q="'+i+'">'+
+          '<button data-val="yes" class="'+(v==='yes'?'on':'')+'"'+dis+'>Yes</button>'+
+          '<button data-val="no" class="'+(v==='no'?'on':'')+'"'+dis+'>No</button>'+
+        '</div></div>';
+    }).join('');
+    document.getElementById('yn-list').innerHTML = h;
+    var g = document.getElementById('goals');
+    g.value = extras.goals || '';
+    g.disabled = readOnly;
+    updateExtrasProgress();
+  }
+  function markDirty(){ if(readOnly) return; dirty=true; saveBtn.disabled = saving;
+    saveState.textContent='Unsaved changes'; saveState.style.color='var(--gold2)'; }
+  document.getElementById('yn-list').addEventListener('click', function(e){
+    var b=e.target.closest('button[data-val]'); if(!b||readOnly) return;
+    var i=+b.parentElement.getAttribute('data-q'); extras.yn[i]=b.getAttribute('data-val'); renderExtras(); markDirty();
+  });
+  document.getElementById('goals').addEventListener('input', function(e){ extras.goals=e.target.value; updateExtrasProgress(); markDirty(); });
+
+  // -------- logout --------
+  function logout(){ ['wc2026:token','wc2026:refresh','wc2026:exp','wc2026:username','wc2026:admin'].forEach(function(k){try{localStorage.removeItem(k);}catch(e){}}); location.href='index.html'; }
   document.getElementById('logout').addEventListener('click', logout);
-
   if(!token){ location.replace('index.html'); }
 
+  // -------- progress --------
   function countDone(p){
-    var n = 0;
+    var n=0;
     WC.groupLetters.forEach(function(g){ if((p.groups[g]||[]).length===4) n++; });
     WC.thirdSlots.forEach(function(id){ if(p.thirds[id]) n++; });
     [].concat(WC.r32,WC.r16,WC.qf,WC.sf,WC.finalMatch,WC.thirdPlace).forEach(function(m){ if(p.winners[m.id]) n++; });
     return n;
   }
-
   function renderProgress(p, full){
-    progress.innerHTML = '<span class="dot'+(full?' go':'')+'"></span><span>'+countDone(p)+' / 52 set'+(full?' · complete':'')+'</span>';
+    progress.innerHTML='<span class="dot'+(full?' go':'')+'"></span><span>'+countDone(p)+' / 52 set'+(full?' · complete':'')+'</span>';
   }
 
   var editor = BracketEditor(document.getElementById('editor'), {
-    readOnly: closed,
-    onChange: function(p){
-      dirty = true;
-      renderProgress(p, editor.complete());
-      saveBtn.disabled = closed || saving;
-      saveState.textContent = 'Unsaved changes'; saveState.style.color = 'var(--gold2)';
-    }
+    readOnly: readOnly,
+    onChange: function(p){ if(readOnly) return; dirty=true; renderProgress(p, editor.complete());
+      saveBtn.disabled=closed||saving; saveState.textContent='Unsaved changes'; saveState.style.color='var(--gold2)'; }
   });
 
-  function setStatus(t){ statusEl.textContent = t; }
-  function handleAuthError(){ POOL.toast('Session expired — please sign in again','err'); setTimeout(logout, 1200); }
+  function applyExtras(x){ if(x){ if(Array.isArray(x.yn)) extras.yn = QUESTIONS.map(function(_,i){ return x.yn[i]||null; });
+    extras.goals = (x.goals!=null?String(x.goals):''); } renderExtras(); }
 
-  document.getElementById('who').textContent = username ? (username + '’s bracket') : 'Your bracket';
+  function handleAuthError(){ POOL.toast('Session expired — please sign in again','err'); setTimeout(logout,1200); }
 
-  POOL.api('/api/entry', { token: token }).then(function(r){
-    if(r.username){ username=r.username; try{localStorage.setItem('wc2026:username',r.username);}catch(e){}
-      document.getElementById('who').textContent = r.username + '’s bracket'; }
-    setStatus(closed ? 'Picks are locked (deadline passed).' : 'Signed in as ' + (username||'you') + ' · edit until ' + (window.POOL_CONFIG.DEADLINE_LABEL||'the deadline') + '.');
-    if(r.picks){ editor.setPicks(r.picks); renderProgress(editor.getPicks(), editor.complete()); }
-    saveState.textContent = r.picks ? 'Saved' : 'Nothing saved yet'; saveState.style.color = 'var(--muted)';
-    if(closed){
-      document.getElementById('locked-note').innerHTML =
-        '<div class="note warn" style="margin-bottom:16px">The deadline has passed — your picks are locked and shown read-only.</div>';
-      document.getElementById('bar').style.display = 'none';
-    }
-  }).catch(function(e){
-    if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
-    setStatus('Could not load your bracket.');
-    document.getElementById('locked-note').innerHTML = '<div class="note err" style="margin-bottom:16px">'+e.message+'</div>';
-  });
+  renderExtras();
 
-  saveBtn.addEventListener('click', function(){
-    if(closed || saving) return;
-    saving = true; saveBtn.disabled = true; saveState.textContent = 'Saving…'; saveState.style.color='var(--muted)';
-    POOL.api('/api/entry', { method:'PUT', token: token, body:{ picks: editor.getPicks(), complete: editor.complete() } })
-      .then(function(){
-        saving = false; dirty = false; saveBtn.disabled = false;
-        saveState.textContent = 'Saved ✓'; saveState.style.color = 'var(--green)';
-        POOL.toast('Picks saved', 'ok');
-      }).catch(function(e){
-        saving = false; saveBtn.disabled = false;
-        if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
-        saveState.textContent = 'Save failed'; saveState.style.color = 'var(--red)';
-        POOL.toast(e.message, 'err');
-      });
-  });
+  if(viewUser){
+    // ----- admin read-only view of another player -----
+    document.getElementById('bar').style.display='none';
+    document.getElementById('who').textContent = viewUser + '’s bracket';
+    document.getElementById('locked-note').innerHTML =
+      '<div class="note warn view-banner">Admin view — '+esc(viewUser)+'’s bracket (read-only). <a href="leaderboard.html">← back to leaderboard</a></div>';
+    POOL.api('/api/user/'+encodeURIComponent(viewUser), { token: token }).then(function(r){
+      setStatusRO(r);
+      if(r.picks) editor.setPicks(r.picks);
+      applyExtras(r.extras);
+      renderProgress(editor.getPicks(), editor.complete());
+    }).catch(function(e){
+      if(/admin|403/i.test(e.message)) { document.getElementById('locked-note').innerHTML='<div class="note err">Admin only.</div>'; return; }
+      if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
+      document.getElementById('locked-note').innerHTML='<div class="note err">'+e.message+'</div>';
+    });
+    function setStatusRO(r){ statusEl.textContent='Read-only view'; }
+  } else {
+    // ----- own bracket -----
+    document.getElementById('who').textContent = username ? (username + '’s bracket') : 'Your bracket';
+    POOL.api('/api/entry', { token: token }).then(function(r){
+      if(r.username){ username=r.username; try{localStorage.setItem('wc2026:username',r.username);}catch(e){}
+        document.getElementById('who').textContent = r.username + '’s bracket'; }
+      // remember admin flag + refresh header so "Save results" appears
+      try { localStorage.setItem('wc2026:admin', r.is_admin ? '1':'0'); } catch(e){}
+      if(r.is_admin) POOL.header('bracket');
+      statusEl.textContent = closed ? 'Picks are locked (deadline passed).'
+        : 'Signed in as ' + (username||'you') + ' · edit until ' + (window.POOL_CONFIG.DEADLINE_LABEL||'the deadline') + '.';
+      if(r.picks){ editor.setPicks(r.picks); renderProgress(editor.getPicks(), editor.complete()); }
+      applyExtras(r.extras);
+      saveState.textContent = (r.picks||r.extras) ? 'Saved' : 'Nothing saved yet'; saveState.style.color='var(--muted)';
+      if(closed){
+        document.getElementById('locked-note').innerHTML='<div class="note warn" style="margin-bottom:16px">The deadline has passed — your answers are locked and read-only.</div>';
+        document.getElementById('bar').style.display='none';
+      }
+    }).catch(function(e){
+      if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
+      statusEl.textContent='Could not load your bracket.';
+      document.getElementById('locked-note').innerHTML='<div class="note err" style="margin-bottom:16px">'+e.message+'</div>';
+    });
 
-  window.addEventListener('beforeunload', function(e){ if(dirty && !closed){ e.preventDefault(); e.returnValue=''; } });
+    saveBtn.addEventListener('click', function(){
+      if(closed||saving) return;
+      saving=true; saveBtn.disabled=true; saveState.textContent='Saving…'; saveState.style.color='var(--muted)';
+      POOL.api('/api/entry', { method:'PUT', token: token,
+        body:{ picks: editor.getPicks(), complete: editor.complete(), extras: extras } })
+        .then(function(){ saving=false; dirty=false; saveBtn.disabled=false;
+          saveState.textContent='Saved ✓'; saveState.style.color='var(--green)'; POOL.toast('Saved','ok'); })
+        .catch(function(e){ saving=false; saveBtn.disabled=false;
+          if(/auth|401|sign in/i.test(e.message)) return handleAuthError();
+          saveState.textContent='Save failed'; saveState.style.color='var(--red)'; POOL.toast(e.message,'err'); });
+    });
+
+    window.addEventListener('beforeunload', function(e){ if(dirty&&!closed){ e.preventDefault(); e.returnValue=''; } });
+  }
 </script>
 </body>
 </html>

@@ -118,6 +118,18 @@ async function upsertUser(env, username, email){
   ).bind(username, email||null, null, 0, ts, ts).run();
 }
 
+// Is the caller an admin? Returns their username if (valid KC token AND entries.is_admin=1), else null.
+async function adminUsername(request, env){
+  const uname=await authUser(request, env);
+  if(!uname) return null;
+  const row=await env.DB.prepare('SELECT is_admin FROM entries WHERE username=?').bind(uname).first();
+  return (row && row.is_admin) ? uname : null;
+}
+function adminTokenOK(request, env){
+  const auth=(request.headers.get('Authorization')||'').replace(/^Bearer\s+/i,'');
+  return !!(env.ADMIN_TOKEN && auth===env.ADMIN_TOKEN);
+}
+
 // ---------- Router ----------------------------------------------------------
 export default {
   async fetch(request, env){
@@ -149,7 +161,27 @@ export default {
         const claims=decodeJwt(token)||{};
         const uname=(claims.preferred_username || username).toString().slice(0,80);
         await upsertUser(env, uname, claims.email||null);
-        return json({ username:uname, token, expires_in:kd.expires_in||300 }, 200, env);
+        return json({ username:uname, token, refresh_token:kd.refresh_token||null,
+          expires_in:kd.expires_in||300, refresh_expires_in:kd.refresh_expires_in||0 }, 200, env);
+      }
+
+      // ---- POST /api/refresh : exchange a refresh_token for a fresh access token ----
+      if(path==='/api/refresh' && request.method==='POST'){
+        const b=await request.json().catch(()=>({}));
+        const rt=(b.refresh_token||'').toString();
+        if(!rt) return err('refresh_token required',400,env);
+        if(!env.KC_TOKEN_URL) return err('Auth is not configured on the server',500,env);
+        const form=new URLSearchParams();
+        form.set('grant_type','refresh_token');
+        form.set('client_id', env.KC_CLIENT_ID || 'wc2026-pool');
+        if(env.KC_CLIENT_SECRET) form.set('client_secret', env.KC_CLIENT_SECRET);
+        form.set('refresh_token', rt);
+        let kr; try{ kr=await fetch(env.KC_TOKEN_URL,{method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:form.toString()}); }
+        catch(e){ return err('Auth server unreachable',502,env); }
+        const kd=await kr.json().catch(()=>({}));
+        if(!kr.ok) return err(kd.error_description || kd.error || 'Session expired — please sign in again', 401, env);
+        return json({ token:kd.access_token, refresh_token:kd.refresh_token||rt, expires_in:kd.expires_in||300 }, 200, env);
       }
 
       // ---- GET/PUT /api/entry : the caller's own bracket (auth required) ----
@@ -157,54 +189,96 @@ export default {
         const uname=await authUser(request, env);
         if(!uname) return err('Not authenticated — please sign in again',401,env);
         if(request.method==='GET'){
-          let row=await env.DB.prepare('SELECT username,email,picks,complete FROM entries WHERE username=?').bind(uname).first();
-          if(!row){ await upsertUser(env, uname, null); row={username:uname,email:null,picks:null,complete:0}; }
+          let row=await env.DB.prepare('SELECT username,email,picks,complete,extras,is_admin FROM entries WHERE username=?').bind(uname).first();
+          if(!row){ await upsertUser(env, uname, null); row={username:uname,email:null,picks:null,complete:0,extras:null,is_admin:0}; }
           return json({ username:row.username, email:row.email||null, complete:!!row.complete,
-            picks: row.picks?JSON.parse(row.picks):null }, 200, env);
+            is_admin: !!row.is_admin,
+            picks: row.picks?JSON.parse(row.picks):null,
+            extras: row.extras?JSON.parse(row.extras):null }, 200, env);
         }
         if(request.method==='PUT'){
           if(deadlinePassed(env)) return err('Deadline passed — picks are locked',403,env);
           const b=await request.json().catch(()=>({}));
           const picks=b.picks?JSON.stringify(b.picks):null;
           if(picks && picks.length>20000) return err('Payload too large',413,env);
+          const extras=b.extras?JSON.stringify(b.extras):null;
+          if(extras && extras.length>4000) return err('Payload too large',413,env);
           const email=b.email?String(b.email).trim().slice(0,120):null;
           await upsertUser(env, uname, email); // ensure row exists
-          await env.DB.prepare('UPDATE entries SET picks=?,complete=?,updated=?'+(email?',email=?':'')+' WHERE username=?')
-            .bind(...(email?[picks,b.complete?1:0,now(),email,uname]:[picks,b.complete?1:0,now(),uname])).run();
+          await env.DB.prepare('UPDATE entries SET picks=?,complete=?,extras=COALESCE(?,extras),updated=?'+(email?',email=?':'')+' WHERE username=?')
+            .bind(...(email?[picks,b.complete?1:0,extras,now(),email,uname]:[picks,b.complete?1:0,extras,now(),uname])).run();
           return json({ ok:true }, 200, env);
         }
       }
 
-      // ---- /api/results : official bracket (admin token) ----
+      // ---- GET /api/user/:username : admin views another player's bracket (read-only) ----
+      const mUser = path.match(/^\/api\/user\/(.+)$/);
+      if(mUser && request.method==='GET'){
+        const au=await adminUsername(request, env);
+        if(!au) return err('Admin only',403,env);
+        const target=decodeURIComponent(mUser[1]);
+        const row=await env.DB.prepare('SELECT username,picks,complete,extras FROM entries WHERE username=?').bind(target).first();
+        if(!row) return err('Not found',404,env);
+        return json({ username:row.username, complete:!!row.complete,
+          picks: row.picks?JSON.parse(row.picks):null,
+          extras: row.extras?JSON.parse(row.extras):null }, 200, env);
+      }
+
+      // ---- /api/results : official bracket + correct bonus answers (admin) ----
       if(path==='/api/results'){
         if(request.method==='GET'){
-          const row=await env.DB.prepare('SELECT picks,updated FROM results WHERE id=1').first();
-          return json({ picks: row&&row.picks?JSON.parse(row.picks):null, updated: row?row.updated:null }, 200, env);
+          const row=await env.DB.prepare('SELECT picks,extras,updated FROM results WHERE id=1').first();
+          return json({ picks: row&&row.picks?JSON.parse(row.picks):null,
+            extras: row&&row.extras?JSON.parse(row.extras):null,
+            updated: row?row.updated:null }, 200, env);
         }
         if(request.method==='PUT'){
-          const auth=(request.headers.get('Authorization')||'').replace(/^Bearer\s+/i,'');
-          if(!env.ADMIN_TOKEN || auth!==env.ADMIN_TOKEN) return err('Unauthorized',401,env);
+          let ok = adminTokenOK(request, env);
+          if(!ok){ const au=await adminUsername(request, env); ok=!!au; }
+          if(!ok) return err('Admin only',403,env);
           const b=await request.json().catch(()=>({}));
           const picks=b.picks?JSON.stringify(b.picks):null;
-          await env.DB.prepare('INSERT INTO results (id,picks,updated) VALUES (1,?,?) '+
-            'ON CONFLICT(id) DO UPDATE SET picks=excluded.picks, updated=excluded.updated').bind(picks, now()).run();
+          const extras=b.extras?JSON.stringify(b.extras):null;
+          await env.DB.prepare('INSERT INTO results (id,picks,extras,updated) VALUES (1,?,?,?) '+
+            'ON CONFLICT(id) DO UPDATE SET picks=COALESCE(excluded.picks,results.picks), '+
+            'extras=COALESCE(excluded.extras,results.extras), updated=excluded.updated')
+            .bind(picks, extras, now()).run();
           return json({ ok:true }, 200, env);
         }
       }
 
-      // ---- GET /api/leaderboard : usernames + scores ----
+      // ---- GET /api/leaderboard : usernames + scores (+ bonus tie-breakers) ----
       if(path==='/api/leaderboard' && request.method==='GET'){
-        const res=await env.DB.prepare('SELECT picks FROM results WHERE id=1').first();
+        const res=await env.DB.prepare('SELECT picks,extras FROM results WHERE id=1').first();
         const actual=res&&res.picks?JSON.parse(res.picks):null;
+        const offExtras=res&&res.extras?JSON.parse(res.extras):null;   // official correct answers
         const scored=!!actual;
-        const { results }=await env.DB.prepare('SELECT username,picks FROM entries ORDER BY updated DESC').all();
+        const offGoals = offExtras && offExtras.goals!=null && offExtras.goals!=='' && isFinite(+offExtras.goals) ? +offExtras.goals : null;
+        const offYN = (offExtras && Array.isArray(offExtras.yn)) ? offExtras.yn : [];
+        const extrasScored = !!(offExtras && (offYN.some(v=>v==='yes'||v==='no') || offGoals!=null));
+
+        const { results }=await env.DB.prepare('SELECT username,picks,extras FROM entries ORDER BY updated DESC').all();
         const rows=(results||[]).map(e=>{
           const picks=e.picks?JSON.parse(e.picks):null;
           let points=0, breakdown=null;
           if(picks && actual){ const s=ENG.score(picks,actual); points=s.total; breakdown=s.breakdown; }
-          return { username:e.username, points, breakdown };
-        }).sort((a,b)=> b.points-a.points || (a.username||'').localeCompare(b.username||''));
-        return json({ rows, scored }, 200, env);
+          // bonus tie-breakers
+          const ex=e.extras?JSON.parse(e.extras):null;
+          let bonusCorrect=null, goalsDiff=null;
+          if(extrasScored){
+            bonusCorrect=0;
+            const yn=ex&&Array.isArray(ex.yn)?ex.yn:[];
+            offYN.forEach((corr,i)=>{ if((corr==='yes'||corr==='no') && yn[i]===corr) bonusCorrect++; });
+            if(offGoals!=null){ const pg=ex&&ex.goals!=null&&ex.goals!==''&&isFinite(+ex.goals)?+ex.goals:null;
+              goalsDiff = pg==null ? null : Math.abs(pg-offGoals); }
+          }
+          return { username:e.username, points, breakdown, bonusCorrect, goalsDiff };
+        }).sort((a,b)=>
+          (b.points-a.points) ||
+          ((b.bonusCorrect||0)-(a.bonusCorrect||0)) ||                         // +0.2 each: more correct wins ties
+          ((a.goalsDiff==null?Infinity:a.goalsDiff)-(b.goalsDiff==null?Infinity:b.goalsDiff)) || // closest goals
+          (a.username||'').localeCompare(b.username||''));
+        return json({ rows, scored, extrasScored }, 200, env);
       }
 
       return err('Not found',404,env);

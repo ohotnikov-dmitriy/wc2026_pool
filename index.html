@@ -52,8 +52,7 @@
     go.disabled = true; show('Signing in…');
     POOL.api('/api/login', { method:'POST', body:{ username:username, password:password } })
       .then(function(r){
-        try { localStorage.setItem('wc2026:token', r.token);
-              localStorage.setItem('wc2026:username', r.username); } catch(e){}
+        POOL.setSession(r);
         location.href = 'bracket.html';
       })
       .catch(function(err){ go.disabled = false; show(err.message || 'Sign-in failed', 'err'); });

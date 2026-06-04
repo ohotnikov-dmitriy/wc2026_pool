@@ -3,28 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin — Official Results</title>
+<title>Save results — World Cup 2026</title>
 <link rel="stylesheet" href="assets/app.css">
 <link rel="stylesheet" href="assets/bracket.css">
+<style>
+  .qa{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .qa:last-of-type{border-bottom:none}
+  .qa .qt{font-size:13.5px;line-height:1.4;max-width:74%}
+  .yn{display:inline-flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden;flex:0 0 auto}
+  .yn button{appearance:none;background:transparent;border:none;color:var(--muted);font:inherit;font-weight:700;font-size:13px;padding:8px 16px;cursor:pointer}
+  .yn button+button{border-left:1px solid var(--line2)}
+  .yn button.on[data-val="yes"]{background:linear-gradient(135deg,var(--green),#15a36c);color:#06140d}
+  .yn button.on[data-val="no"]{background:linear-gradient(135deg,#ff6b6b,#d8434a);color:#190a0b}
+  .goalq{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:6px}
+  .goalq input{width:140px;background:#0c1119;border:1px solid var(--line2);border-radius:10px;color:var(--ink);font:inherit;font-size:15px;padding:10px 12px}
+</style>
 </head>
 <body>
 <div class="wrap">
   <div id="app-header"></div>
 
   <div class="card" style="margin-bottom:16px">
-    <div class="kicker" style="font-size:18px;color:var(--gold2)">Organizer — official results</div>
-    <p class="muted" style="font-size:13px">Fill this bracket with what <b>actually happened</b>. Everyone is scored against it.
-      You can update it as the tournament progresses (partial results are fine). Requires the admin token.</p>
-    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-      <div style="flex:1;min-width:220px">
-        <label class="fl" for="tok">Admin token</label>
-        <input class="fi" id="tok" type="password" placeholder="set in the Worker secret">
-      </div>
-      <button class="btn" id="load">Load current</button>
+    <div class="kicker" style="font-size:18px;color:var(--gold2)">Official results (admin)</div>
+    <p class="muted" style="font-size:13px">Fill the bracket with what <b>actually happened</b> and the correct bonus answers below.
+      Everyone is scored against it; bonus answers are used to break ties. Partial results are fine.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="reload">Reload current</button>
       <button class="btn btn-gold" id="save">Save official results</button>
+      <div id="msg" style="flex:1;min-width:200px"></div>
     </div>
-    <div id="msg" style="margin-top:12px"></div>
   </div>
+
+  <!-- correct bonus answers -->
+  <section class="card" id="extras-card" style="margin-bottom:16px">
+    <div class="kicker" style="font-size:16px;color:var(--gold2);margin-bottom:6px">Correct bonus answers (for tie-breaks)</div>
+    <div id="yn-list"></div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <div class="goalq">
+      <label class="qt" for="goals" style="font-size:13.5px;max-width:74%">Actual total goals at the FIFA 2026 World Cup</label>
+      <input type="number" id="goals" min="0" step="1" inputmode="numeric" placeholder="actual number">
+    </div>
+  </section>
 
   <div id="editor"></div>
 </div>
@@ -36,32 +55,73 @@
 <script src="assets/bracket.js"></script>
 <script>
   POOL.header('admin');
-  var msg = document.getElementById('msg');
-  function show(h,k){ msg.innerHTML = '<div class="note '+(k||'')+'">'+h+'</div>'; }
-  function token(){ return document.getElementById('tok').value.trim(); }
+  var token=null; try{ token=localStorage.getItem('wc2026:token'); }catch(e){}
+  var msg=document.getElementById('msg');
+  function show(h,k){ msg.innerHTML='<div class="note '+(k||'')+'">'+h+'</div>'; }
+  function logout(){ ['wc2026:token','wc2026:refresh','wc2026:exp','wc2026:username','wc2026:admin'].forEach(function(k){try{localStorage.removeItem(k);}catch(e){}}); location.href='index.html'; }
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  if(!token){ location.replace('index.html'); }
+
+  // must match the questions on bracket.html (order matters for scoring)
+  var QUESTIONS = [
+    'Will more than 140 goals be scored during the FIFA World Cup group stage?',
+    'Will Lionel Messi score 4 or more goals during the tournament (excluding goals scored in penalty shootouts)?',
+    'Will more than 15 penalties be awarded during the group stage?*',
+    'Will the Uzbekistan national team qualify for the knockout stage?*',
+    'Will there be at least 3 matches ending 0–0 during the group stage?'
+  ];
+  var correct = { yn: QUESTIONS.map(function(){return null;}), goals: '' };
+  function renderExtras(){
+    document.getElementById('yn-list').innerHTML = QUESTIONS.map(function(q,i){
+      var v=correct.yn[i];
+      return '<div class="qa"><div class="qt">'+esc(q)+'</div><div class="yn" data-q="'+i+'">'+
+        '<button data-val="yes" class="'+(v==='yes'?'on':'')+'">Yes</button>'+
+        '<button data-val="no" class="'+(v==='no'?'on':'')+'">No</button></div></div>';
+    }).join('');
+    document.getElementById('goals').value = correct.goals || '';
+  }
+  document.getElementById('yn-list').addEventListener('click', function(e){
+    var b=e.target.closest('button[data-val]'); if(!b) return;
+    var i=+b.parentElement.getAttribute('data-q'); correct.yn[i]=b.getAttribute('data-val'); renderExtras();
+  });
+  document.getElementById('goals').addEventListener('input', function(e){ correct.goals=e.target.value; });
+  renderExtras();
 
   var editor = BracketEditor(document.getElementById('editor'), { readOnly:false, onChange:function(){} });
 
-  // remember token locally for convenience
-  try { var t = localStorage.getItem('wc2026:adminTok'); if(t) document.getElementById('tok').value = t; } catch(e){}
+  POOL.api('/api/entry', { token: token }).then(function(r){
+    try { localStorage.setItem('wc2026:admin', r.is_admin?'1':'0'); }catch(e){}
+    if(!r.is_admin){
+      document.querySelector('.wrap').innerHTML =
+        '<div id="app-header"></div><div class="card"><div class="note err">This page is for administrators only.</div>'+
+        '<p class="muted" style="margin-top:12px"><a href="bracket.html">← go to my bracket</a></p></div>';
+      POOL.header('admin'); return;
+    }
+    POOL.header('admin');
+    loadResults();
+  }).catch(function(e){
+    if(/auth|401|sign in/i.test(e.message)){ POOL.toast('Please sign in','err'); setTimeout(logout,1000); return; }
+    show(e.message,'err');
+  });
 
-  document.getElementById('load').addEventListener('click', function(){
+  function loadResults(){
     POOL.api('/api/results').then(function(r){
       if(r.picks) editor.setPicks(r.picks);
-      show('Loaded current official results.', 'ok');
-    }).catch(function(e){ show(e.message, 'err'); });
-  });
+      if(r.extras){ if(Array.isArray(r.extras.yn)) correct.yn=QUESTIONS.map(function(_,i){return r.extras.yn[i]||null;});
+        correct.goals=(r.extras.goals!=null?String(r.extras.goals):''); renderExtras(); }
+      show('Loaded current official results.','ok');
+    }).catch(function(e){ show(e.message,'err'); });
+  }
+  document.getElementById('reload').addEventListener('click', loadResults);
 
   document.getElementById('save').addEventListener('click', function(){
-    if(!token()){ show('Enter the admin token.', 'err'); return; }
-    try { localStorage.setItem('wc2026:adminTok', token()); } catch(e){}
-    POOL.api('/api/results', { method:'PUT', token:token(), body:{ picks: editor.getPicks() } })
-      .then(function(){ show('Official results saved. Leaderboard will reflect them.', 'ok'); })
-      .catch(function(e){ show(e.message, 'err'); });
+    POOL.api('/api/results', { method:'PUT', token: token, body:{ picks: editor.getPicks(), extras: correct } })
+      .then(function(){ show('Official results saved. Leaderboard will update.','ok'); })
+      .catch(function(e){
+        if(/auth|401|sign in/i.test(e.message)){ POOL.toast('Please sign in','err'); setTimeout(logout,1000); return; }
+        show(e.message,'err');
+      });
   });
-
-  // auto-load (public read) on open
-  POOL.api('/api/results').then(function(r){ if(r.picks) editor.setPicks(r.picks); }).catch(function(){});
 </script>
 </body>
 </html>

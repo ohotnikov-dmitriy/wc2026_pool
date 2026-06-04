@@ -34,13 +34,16 @@
 <script src="assets/common.js"></script>
 <script>
   POOL.header('leaderboard');
-  var me = null; try { me = localStorage.getItem('wc2026:username'); } catch(e){}
+  var me = null, isAdmin = false;
+  try { me = localStorage.getItem('wc2026:username'); isAdmin = localStorage.getItem('wc2026:admin')==='1'; } catch(e){}
 
   POOL.api('/api/leaderboard').then(function(r){
     var rows = r.rows || [];
     document.getElementById('sub').textContent =
       rows.length + ' ' + (rows.length===1?'entry':'entries') +
-      (r.scored ? ' · scored vs official results' : ' · results not entered yet (0 pts so far)');
+      (r.scored ? ' · scored vs official results' : ' · results not entered yet (0 pts so far)') +
+      (r.extrasScored ? ' · ties broken by bonus answers' : '') +
+      (isAdmin ? ' · click a player to view their bracket' : '');
     if(!rows.length){ document.getElementById('board').innerHTML =
       '<p class="muted" style="padding:16px">No entries yet. <a href="index.html">Sign in to play →</a></p>'; return; }
     var h = '<table><thead><tr><th>#</th><th>Player</th><th class="r">Points</th></tr></thead><tbody>';
@@ -49,9 +52,17 @@
       var mine = me && row.username===me;
       var bd = row.breakdown || {};
       var bdStr = ['r32','r16','qf','sf','bronze','final','champion'].map(function(k){ return (bd[k]||0); }).join(' · ');
+      if(r.extrasScored){
+        if(row.bonusCorrect!=null) bdStr += '  ·  bonus ' + row.bonusCorrect + '/5';
+        if(row.goalsDiff!=null) bdStr += '  ·  goals Δ' + row.goalsDiff;
+      }
+      var name = esc(row.username||'—');
+      var nameCell = isAdmin
+        ? '<a href="bracket.html?user='+encodeURIComponent(row.username||'')+'"><b>'+name+'</b></a>'
+        : '<b>'+name+'</b>';
       h += '<tr class="'+(mine?'me':'')+'">' +
         '<td class="rank'+g+'">'+rk+'</td>' +
-        '<td><b>'+esc(row.username||'—')+'</b>'+(mine?' <span class="dim">(you)</span>':'')+
+        '<td>'+nameCell+(mine?' <span class="dim">(you)</span>':'')+
           '<div class="bd">'+bdStr+'</div></td>' +
         '<td class="r"><span class="pts">'+(row.points!=null?row.points:0)+'</span></td>' +
       '</tr>';
