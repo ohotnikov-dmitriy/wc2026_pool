@@ -29,7 +29,7 @@
     nav += '<a href="leaderboard.html">Leaderboard</a>';
     if (signedIn && isAdmin) nav += '<a href="admin.html">Save results</a>';
     if (signedIn) nav += '<a href="#" id="nav-logout" title="' + uname + '">Log out</a>';
-    else nav += '<a href="index.html">Sign in</a>';
+    // else nav += '<a href="index.html">Sign in</a>' -->
     el.innerHTML =
       '<div class="top"><div class="brand">' +
         '<div class="crest">26</div>' +
